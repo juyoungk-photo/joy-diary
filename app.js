@@ -7,7 +7,8 @@
 // One page: a lock screen, then home (newest day, days by month,
 // collections, photo albums), a list per day or collection, and a player
 // that plays a list through. The catalog arrives encrypted (crypto.js) and
-// is opened with the family code.
+// is opened with the family code. Albums the family adds themselves come
+// from a separate encrypted store (albums.js).
 //
 // Where the code lives: in localStorage, and in the address as #code=…
 // iOS gives a home-screen web app its own storage, separate from Safari's,
@@ -15,12 +16,17 @@
 // The fragment is never sent to the server.
 
 import { openCatalog, normalizeCode, WrongCodeError } from './crypto.js';
+import { createAlbumStore, parseAlbumLink, cleanTitle, StoreError, TITLE_MAX } from './albums.js';
 
 const CODE_KEY = 'familyhub.code';
 const PUBLIC_TITLE = 'Joy Diary';
 const app = document.getElementById('app');
 let catalog = null;
 let shownRoute = null;
+let configPromise = null;
+let albumStore = null;     // null when config.json names no store
+let familyAlbums = null;   // decrypted store entries, newest first; null until known
+let albumsEl = null;       // the home screen's 사진 앨범 section
 
 // MARK: - Small helpers
 
@@ -111,8 +117,16 @@ async function fetchEnvelope() {
   return r.json();
 }
 
+/// config.json, or null — nothing in it is needed to watch videos.
+function fetchConfig() {
+  return fetch('config.json', { cache: 'no-cache' })
+    .then(r => (r.ok ? r.json() : null))
+    .catch(() => null);
+}
+
 async function boot() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  configPromise = fetchConfig();
 
   let envelope;
   try {
@@ -128,7 +142,7 @@ async function boot() {
     try {
       catalog = await openCatalog(envelope, code);
       remember(normalizeCode(code));
-      return start();
+      return start(normalizeCode(code));
     } catch (e) {
       if (!(e instanceof WrongCodeError)) return renderOffline();
     }
@@ -150,7 +164,7 @@ function renderLock(envelope, changed) {
   const unlocked = (code) => {
     window.removeEventListener('hashchange', onInvite);
     remember(code);
-    start();
+    start(code);
   };
   // An invite link opened while this screen is up changes only the
   // fragment, so the page does not start again by itself.
@@ -203,10 +217,13 @@ function renderOffline() {
     h('button', { class: 'btn btn-primary', type: 'button', onclick: () => location.reload() }, '다시 시도')));
 }
 
-function start() {
+async function start(code) {
   FocusPlayer.preload();
   window.addEventListener('popstate', onPopState);
+  const config = await configPromise;
+  albumStore = createAlbumStore(config && config.albumStore, code);
   route();
+  loadFamilyAlbums();
 }
 
 // MARK: - Routing (?e=<event> | ?c=<collection>; the #code stays put)
@@ -269,16 +286,7 @@ function renderHome() {
           h('div', { class: 'info' }, `영상 ${col.videos.length}개`)))),
     ],
 
-    c.albums.length > 0 && [
-      h('h2', { class: 'section' }, '사진 앨범'),
-      h('div', { class: 'rows' }, c.albums.map(a =>
-        h('a', { class: 'album', href: a.url, target: '_blank', rel: 'noopener' },
-          h('span', { class: 'icon', 'aria-hidden': 'true' }, '📷'),
-          h('div', null,
-            h('div', { class: 'name' }, a.title),
-            a.note && h('div', { class: 'info' }, a.note)),
-          h('span', { class: 'go' }, '열기 ›')))),
-    ],
+    albumSection(),
 
     footer()));
 }
@@ -328,6 +336,232 @@ function footer() {
   return h('p', { class: 'foot' },
     isNaN(d) ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 업데이트 · `,
     h('a', { href: '#', onclick: (e) => { e.preventDefault(); openHelp(); } }, '홈 화면에 추가하는 방법'));
+}
+
+// MARK: - Photo albums
+//
+// The catalog's albums (tools/curation.json) first, then the ones the family
+// added, newest first. A device can take out the albums it added. Without
+// the store the section is the catalog's albums alone.
+
+function albumSection() {
+  albumsEl = h('section', { class: 'albums' });
+  fillAlbums();
+  return albumsEl;
+}
+
+function bakedAlbums() { return catalog.albums || []; }
+
+function addedAlbums() {
+  const known = bakedAlbums().map(a => a.url);
+  return (familyAlbums || []).filter(a => known.indexOf(a.url) < 0);
+}
+
+function fillAlbums() {
+  if (!albumsEl) return;
+  const baked = bakedAlbums();
+  const added = addedAlbums();
+  albumsEl.textContent = '';
+  albumsEl.hidden = !baked.length && !added.length && !albumStore;
+  if (albumsEl.hidden) return;
+  albumsEl.append(
+    h('h2', { class: 'section' }, '사진 앨범'),
+    (baked.length > 0 || added.length > 0) && h('div', { class: 'rows' },
+      baked.map(a => albumLink(a.title, a.note, a.url)),
+      added.map(a => {
+        const link = albumLink(a.title, addedNote(a), a.url);
+        if (!a.mine) return link;
+        return h('div', { class: 'album-row' }, link,
+          h('button', { class: 'album-remove', type: 'button', 'aria-label': a.title + ' 빼기', onclick: () => confirmRemove(a) }, '빼기'));
+      })),
+    isApple && (baked.length > 0 || added.length > 0) &&
+      h('button', { class: 'btn btn-soft btn-block photos-app', type: 'button', onclick: openPhotosApp }, '사진 앱에서 보기'),
+    albumStore && h('button', { class: 'btn btn-soft btn-block add-album', type: 'button', onclick: openAddAlbum }, '+ 앨범 추가'));
+}
+
+/// For family invited to a shared album as subscribers: the Photos app is
+/// faster than the web page and keeps the pictures. There is no link to one
+/// album in Photos — `photos-redirect://` (undocumented, may stop working)
+/// opens the app at its start — so the sheet says where to go from there.
+function openPhotosApp() {
+  const close = () => { document.removeEventListener('visibilitychange', left); sheet.remove(); };
+  const status = h('p', { class: 'error', role: 'status' });
+  let leftApp = false;
+  const left = () => { if (document.hidden) leftApp = true; };
+
+  const open = () => {
+    leftApp = false;
+    status.textContent = '';
+    document.addEventListener('visibilitychange', left);
+    window.location.href = 'photos-redirect://';
+    setTimeout(() => {
+      if (leftApp) { close(); return; }
+      status.textContent = '사진 앱이 열리지 않았어요. 홈 화면에서 사진 앱을 직접 열어 주세요.';
+    }, 1800);
+  };
+
+  const sheet = h('div', { class: 'sheet', onclick: (e) => { if (e.target === sheet) close(); } },
+    h('div', { class: 'panel', role: 'dialog', 'aria-label': '사진 앱에서 보기' },
+      h('h2', null, '사진 앱에서 보기'),
+      h('ol', null,
+        h('li', null, '아래 버튼을 누르면 사진 앱이 열려요.'),
+        h('li', null, "'공유 앨범'을 찾아 누르세요. 화면을 아래로 내리면 있어요."),
+        h('li', null, '보고 싶은 앨범 이름을 누르세요.')),
+      h('p', { class: 'note' }, '공유 앨범에 초대받은 경우에만 사진 앱에 보여요. 초대받지 않았다면 위의 앨범을 눌러 보세요.'),
+      status,
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn btn-primary btn-block', type: 'button', onclick: open }, '사진 앱 열기'),
+        h('button', { class: 'btn btn-soft btn-block', type: 'button', onclick: close }, '닫기'))));
+  document.body.append(sheet);
+}
+
+function albumLink(title, note, url) {
+  return h('a', { class: 'album', href: url, target: '_blank', rel: 'noopener' },
+    h('span', { class: 'icon', 'aria-hidden': 'true' }, '📷'),
+    h('div', { class: 'text' },
+      h('div', { class: 'name' }, title),
+      note && h('div', { class: 'info' }, note)),
+    h('span', { class: 'go' }, '열기 ›'));
+}
+
+function addedNote(a) {
+  const d = new Date(a.createdAt);
+  return isNaN(d) || !a.createdAt ? '가족이 추가한 앨범' : `${d.getMonth() + 1}월 ${d.getDate()}일에 추가`;
+}
+
+/// The last list this device saw, then the store's own; quietly keeps the
+/// catalog's albums alone when neither comes.
+async function loadFamilyAlbums() {
+  if (!albumStore) return;
+  albumStore.cached().then(list => {
+    if (familyAlbums == null) { familyAlbums = list; fillAlbums(); }
+  }).catch(() => {});
+  try {
+    familyAlbums = await albumStore.list();
+    fillAlbums();
+  } catch (e) {}
+}
+
+function storeMessage(err) {
+  const kind = err instanceof StoreError ? err.kind : 'server';
+  if (kind === 'offline') return '인터넷 연결을 확인하고 다시 눌러 주세요.';
+  if (kind === 'unauthorized') return '지금은 바꿀 수 없어요. 가족 코드가 바뀌었는지 확인해 주세요.';
+  if (kind === 'not-set-up') return '앨범 저장소가 아직 준비되지 않았어요.';
+  if (kind === 'full') return '앨범이 너무 많아요. 안 보는 앨범을 먼저 빼 주세요.';
+  return '저장하지 못했어요. 잠시 후 다시 해 주세요.';
+}
+
+function openAddAlbum() {
+  const close = () => sheet.remove();
+  const name = h('input', {
+    type: 'text', id: 'album-name', maxlength: String(TITLE_MAX), autocomplete: 'off',
+    enterkeyhint: 'next', placeholder: '예: 2026 가을 소풍',
+  });
+  const link = h('textarea', {
+    id: 'album-link', rows: '3', autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off',
+    spellcheck: 'false', placeholder: '여기를 길게 눌러 붙여넣기',
+  });
+  const error = h('p', { class: 'error', role: 'alert' });
+  const addBtn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, '추가하기');
+
+  const canPaste = !!(navigator.clipboard && navigator.clipboard.readText);
+  const paste = async () => {
+    try {
+      link.value = await navigator.clipboard.readText();
+      error.textContent = '';
+    } catch (e) {
+      error.textContent = '붙여넣지 못했어요. 칸을 길게 눌러 붙여넣기를 눌러 주세요.';
+    }
+  };
+
+  const fail = (message, field) => {
+    error.textContent = message;
+    if (field) field.focus();
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const title = cleanTitle(name.value);
+    if (!title) return fail('앨범 이름을 적어 주세요.', name);
+    const parsed = parseAlbumLink(link.value);
+    if (parsed.error === 'empty') return fail('링크를 붙여 넣어 주세요.', link);
+    if (parsed.error === 'photoLink') return fail('이 링크는 사진 몇 장만 보내는 링크라 30일 뒤에 사라져요. 공유 앨범의 공개 웹사이트 링크를 넣어 주세요.', link);
+    if (parsed.error) return fail('아이폰 공유 앨범 링크가 아니에요. 아래 방법으로 링크를 복사해 주세요.', link);
+    const known = bakedAlbums().map(a => a.url).concat((familyAlbums || []).map(a => a.url));
+    if (known.indexOf(parsed.url) >= 0) return fail('이미 목록에 있는 앨범이에요.', link);
+
+    addBtn.disabled = true;
+    addBtn.textContent = '저장하는 중…';
+    error.textContent = '';
+    try {
+      await albumStore.add(title, parsed.url);
+    } catch (err) {
+      addBtn.disabled = false;
+      addBtn.textContent = '추가하기';
+      // The reply can be lost after the script saved it; the fresh list
+      // lets the duplicate check catch a second try.
+      loadFamilyAlbums();
+      return fail(storeMessage(err));
+    }
+    close();
+    loadFamilyAlbums();
+  };
+
+  const sheet = h('div', { class: 'sheet', onclick: (e) => { if (e.target === sheet) close(); } },
+    h('form', { class: 'panel', role: 'dialog', 'aria-label': '사진 앨범 추가', onsubmit: submit, novalidate: true },
+      h('h2', null, '사진 앨범 추가'),
+      h('p', { class: 'lead' }, "아이폰 공유 앨범의 '공개 웹사이트' 링크를 넣으면 가족 모두에게 보여요."),
+      h('label', { class: 'field', for: 'album-name' }, '앨범 이름'),
+      name,
+      h('label', { class: 'field', for: 'album-link' }, '공유 앨범 링크'),
+      link,
+      canPaste && h('button', { class: 'btn btn-soft btn-block paste', type: 'button', onclick: paste }, '복사한 링크 붙여넣기'),
+      error,
+      h('div', { class: 'actions' },
+        addBtn,
+        h('button', { class: 'btn btn-soft btn-block', type: 'button', onclick: close }, '취소')),
+      h('h3', null, '링크는 이렇게 복사해요'),
+      h('ol', null,
+        h('li', null, "아이폰 '사진' 앱 → 앨범 → 공유 앨범에서 앨범을 여세요."),
+        h('li', null, '위쪽의 사람 모양 버튼을 누르세요.'),
+        h('li', null, "'공개 웹사이트'를 켜고 '링크 공유' → '복사'를 누르세요."),
+        h('li', null, "여기로 돌아와 '복사한 링크 붙여넣기'를 누르세요."))));
+  document.body.append(sheet);
+  name.focus();
+}
+
+function confirmRemove(album) {
+  const close = () => sheet.remove();
+  const error = h('p', { class: 'error', role: 'alert' });
+  const removeBtn = h('button', {
+    class: 'btn btn-primary btn-block', type: 'button',
+    onclick: async () => {
+      removeBtn.disabled = true;
+      removeBtn.textContent = '빼는 중…';
+      error.textContent = '';
+      try {
+        await albumStore.remove(album.id);
+      } catch (err) {
+        removeBtn.disabled = false;
+        removeBtn.textContent = '목록에서 빼기';
+        error.textContent = storeMessage(err);
+        return;
+      }
+      familyAlbums = (familyAlbums || []).filter(a => a.id !== album.id);
+      fillAlbums();
+      close();
+    },
+  }, '목록에서 빼기');
+
+  const sheet = h('div', { class: 'sheet', onclick: (e) => { if (e.target === sheet) close(); } },
+    h('div', { class: 'panel', role: 'dialog', 'aria-label': '앨범 빼기' },
+      h('h2', null, `'${album.title}' 앨범을 목록에서 뺄까요?`),
+      h('p', { class: 'lead' }, '아이폰에 있는 사진은 지워지지 않아요. 이 목록에서만 빠져요.'),
+      error,
+      h('div', { class: 'actions' },
+        removeBtn,
+        h('button', { class: 'btn btn-soft btn-block', type: 'button', onclick: close }, '취소'))));
+  document.body.append(sheet);
 }
 
 // MARK: - A day or a collection
@@ -542,6 +776,10 @@ function openHelp() {
       (guide.help || []).length > 0 && h('ol', null, guide.help.map(t => h('li', null, t))),
       h('h2', null, '홈 화면에 추가하기'),
       install,
+      h('h2', null, '사진 앨범'),
+      h('ol', null,
+        albumStore && h('li', null, "'+ 앨범 추가'로 아이폰 공유 앨범 링크를 넣으면 가족 모두가 볼 수 있어요."),
+        h('li', null, "공유 앨범에 초대를 받았다면 아이폰 '사진' 앱 → 앨범 → '공유 앨범'에서도 볼 수 있어요. 앨범 주인이 허락하면 사진을 직접 올릴 수도 있어요.")),
       h('div', { class: 'actions' },
         shareBtn,
         h('button', { class: 'btn btn-primary btn-block', type: 'button', onclick: close }, '닫기'))));

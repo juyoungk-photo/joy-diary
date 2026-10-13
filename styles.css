@@ -241,6 +241,25 @@ h3.month {
 .album .name { font-weight: 800; font-size: 1.1rem; }
 .album .info { color: var(--muted); font-size: .9rem; }
 .album .go { margin-left: auto; color: var(--accent); font-weight: 700; white-space: nowrap; }
+.album .text { min-width: 0; }
+.album .name { overflow-wrap: anywhere; }
+.album-row { display: flex; gap: 10px; align-items: stretch; }
+.album-row .album { flex: 1; min-width: 0; }
+.album-remove {
+  flex: none;
+  min-width: 72px;
+  padding: 0 14px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  font-weight: 700;
+}
+.add-album { margin-top: 12px; }
+.photos-app { margin-top: 12px; }
+.sheet .note { color: var(--muted); font-size: .95rem; margin: 0 0 12px; }
+.sheet .error { color: var(--accent); font-weight: 600; min-height: 0; margin: 0 0 12px; }
+.sheet .error:empty { display: none; }
 
 .list-head h1 { font-size: 1.7rem; margin: 6px 0 2px; }
 .list-head .info { color: var(--muted); margin: 0 0 16px; }
@@ -340,5 +359,26 @@ h3.month {
 .sheet ol { padding-left: 1.3em; margin: 0 0 18px; }
 .sheet li { margin-bottom: 10px; font-size: 1.05rem; }
 .sheet .actions { display: flex; flex-direction: column; gap: 10px; }
+.sheet h3 { margin: 26px 0 10px; font-size: 1.1rem; }
+.sheet .lead { margin: 0 0 18px; color: var(--muted); font-size: 1.05rem; }
+.sheet .field { display: block; margin: 0 0 6px; font-weight: 800; font-size: 1.1rem; }
+.sheet input, .sheet textarea {
+  display: block;
+  width: 100%;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 1.15rem;
+  color: var(--ink);
+  border-radius: 14px;
+  border: 2px solid var(--line);
+  background: var(--surface);
+  outline: none;
+  -webkit-appearance: none;
+}
+.sheet textarea { resize: vertical; min-height: 96px; overflow-wrap: anywhere; }
+.sheet input:focus, .sheet textarea:focus { border-color: var(--accent); }
+.sheet .paste { margin: -6px 0 14px; }
+.sheet .error { color: var(--accent); font-weight: 700; min-height: 1.4em; margin: 0 0 12px; font-size: 1.05rem; }
 
 .loading { text-align: center; color: var(--muted); padding: 80px 0; }
