@@ -1,0 +1,35 @@
+/* FocusPlayerKit 0.1.0 (e630f2f) — copied by tools/sync-player.sh; edit it in FocusPlayerKit, not here. */
+/*
+ *  focus-player.css — FocusPlayerKit
+ *
+ *  The one stylesheet every focus player uses: SolaPraise's loopback page and
+ *  its loadSimulatedRequest fallback (both inlined from player.html), and any
+ *  web page that hosts a player in a `.focus-player-host` box.
+ *
+ *  The IFrame API replaces the placeholder div with an iframe and gives that
+ *  iframe an inline size — 640x390 unless told otherwise. An inline style
+ *  beats an id selector, so a plain `#player { width:100% }` loses, and the
+ *  video sits at a fixed size inside a view of a different one: black, until
+ *  some later frame change happens to line the two up. That is why docking
+ *  and restoring once "fixed" it, and why retrying did not.
+ *  !important and absolute positioning win, whatever the API writes inline.
+ *
+ *  History: this fix (SolaPraise 3790dba) once went into only one of two
+ *  copies of the player page. There is one copy now.
+ */
+
+.focus-player-host {
+  position: relative;
+  background: #000;
+  overflow: hidden;
+}
+
+.focus-player-host > div,
+.focus-player-host > iframe {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  border: 0;
+}

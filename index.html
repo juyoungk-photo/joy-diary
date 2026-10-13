@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Joy Diary</title>
+  <meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161311" media="(prefers-color-scheme: dark)">
+  <!-- Home screen: iOS takes the page's URL (with the #code) when added. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Joy Diary">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="vendor/focus-player/focus-player.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app">
+    <div class="loading">불러오는 중…</div>
+  </main>
+
+  <noscript><p class="loading">이 페이지는 자바스크립트가 필요해요.</p></noscript>
+
+  <!-- The player outlives every screen, so a video started once keeps the
+       permission to play the next one with sound. -->
+  <section class="player" id="player" hidden aria-label="영상 플레이어">
+    <div class="bar">
+      <button class="close" id="player-close" type="button">✕ 닫기</button>
+      <span class="pos" id="player-pos"></span>
+    </div>
+    <div class="stage">
+      <div class="focus-player-host"><div id="yt"></div></div>
+      <div class="hint" id="player-hint" hidden>가운데 ▶ 버튼을 눌러 주세요</div>
+      <div class="cover" id="player-cover" hidden></div>
+    </div>
+    <div class="below">
+      <p class="now" id="player-title"></p>
+      <p class="now-info" id="player-info"></p>
+      <div class="nav">
+        <button class="btn" id="player-prev" type="button">◀ 이전</button>
+        <button class="btn" id="player-next" type="button">다음 ▶</button>
+      </div>
+      <div class="rows" id="player-queue"></div>
+    </div>
+  </section>
+
+  <!-- The IFrame API is fetched by FocusPlayer.preload() once unlocked. -->
+  <script src="vendor/focus-player/focus-player.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
