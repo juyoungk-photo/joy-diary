@@ -39,6 +39,8 @@ const standalone = (window.matchMedia && window.matchMedia('(display-mode: stand
   || window.navigator.standalone === true;
 const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+/// Phones and tablets: the only places where 홈 화면에 추가 means anything.
+const isMobile = isApple || /Android/i.test(navigator.userAgent);
 
 /// Element builder. Text is always text — titles come from YouTube.
 function h(tag, props, ...kids) {
@@ -53,6 +55,13 @@ function h(tag, props, ...kids) {
       else el.setAttribute(k, v === true ? '' : v);
     }
   }
+  return fill(el, ...kids);
+}
+
+/// Appends children the way h() does: arrays flattened, and null / false
+/// (the `cond && node` idiom) skipped. The DOM's own append() would print
+/// them as the words "null" and "false".
+function fill(el, ...kids) {
   for (const kid of kids.flat(3)) {
     if (kid == null || kid === false) continue;
     el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
@@ -62,7 +71,7 @@ function h(tag, props, ...kids) {
 
 function mount(...nodes) {
   app.textContent = '';
-  app.append(...nodes);
+  fill(app, ...nodes);
 }
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -333,9 +342,13 @@ function eventRows(events) {
 
 function footer() {
   const d = new Date(catalog.updatedAt);
+  const updated = isNaN(d) ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 업데이트`;
+  // On a computer, or already opened from the home screen, there is nothing to add.
+  const showInstall = isMobile && !standalone;
   return h('p', { class: 'foot' },
-    isNaN(d) ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 업데이트 · `,
-    h('a', { href: '#', onclick: (e) => { e.preventDefault(); openHelp(); } }, '홈 화면에 추가하는 방법'));
+    updated,
+    showInstall && updated && ' · ',
+    showInstall && h('a', { href: '#', onclick: (e) => { e.preventDefault(); openHelp(); } }, '홈 화면에 추가하는 방법'));
 }
 
 // MARK: - Photo albums
@@ -364,7 +377,7 @@ function fillAlbums() {
   albumsEl.textContent = '';
   albumsEl.hidden = !baked.length && !added.length && !albumStore;
   if (albumsEl.hidden) return;
-  albumsEl.append(
+  fill(albumsEl,
     h('h2', { class: 'section' }, '사진 앨범'),
     (baked.length > 0 || added.length > 0) && h('div', { class: 'rows' },
       baked.map(a => albumLink(a.title, a.note, a.url)),
@@ -757,9 +770,11 @@ function openHelp() {
           h('li', null, 'Safari 화면의 공유 버튼(네모에 위쪽 화살표)을 누르세요. 아이폰은 아래쪽, 아이패드는 위쪽에 있어요.'),
           h('li', null, "목록을 내려서 '홈 화면에 추가'를 누르세요."),
           h('li', null, "오른쪽 위 '추가'를 누르면 홈 화면에 아이콘이 생겨요."))]
-      : [h('ol', null,
-          h('li', null, '크롬 오른쪽 위 ⋮ 버튼을 누르세요.'),
-          h('li', null, "'홈 화면에 추가' 또는 '앱 설치'를 누르세요."))];
+      : isMobile
+        ? [h('ol', null,
+            h('li', null, '크롬 오른쪽 위 ⋮ 버튼을 누르세요.'),
+            h('li', null, "'홈 화면에 추가' 또는 '앱 설치'를 누르세요."))]
+        : [h('p', null, '휴대폰이나 아이패드에서 이 링크를 열면, 앱처럼 홈 화면에 아이콘을 둘 수 있어요. 아래 버튼으로 링크를 보내 보세요.')];
 
   const share = async () => {
     try {
